@@ -30,7 +30,7 @@ class Generator(nn.Module):
             nn.ReLU(True),
             # state size. ``(ngf*2) x 16 x 16``
             nn.ConvTranspose2d(params['ngf'] * 2, params['nc'], 4, 2, 1, bias=False),
-            nn.Tanh()
+            nn.Sigmoid()
             # state size. ``(nc) x 32 x 32`
         )
 
