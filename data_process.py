@@ -4,7 +4,7 @@ import os
 import warnings
 from PIL import Image
 from utils.logger import TgaLogger
-from utils.tool import check_fix_path,check_del_path,IPv62VecCluster
+from utils.tool import check_fix_path, check_del_path, IPv62VecCluster
 import shutil
 import random
 
@@ -37,6 +37,7 @@ class RandomizedSampleClassifier(Classifier):
         super().__init__(data_path, seeds_path, tool_path, log_name=log_name)
         self.__logger = self.logger
         self.__out_path = os.path.join(self.out_path, 'randomized_sample')
+        check_del_path(self.__out_path)
         check_fix_path(self.__out_path)
         if n_sample > 0:
             self.__n_sample = n_sample
@@ -66,6 +67,7 @@ class RFCClassifier(Classifier):
         super().__init__(data_path, seeds_path, tool_path, log_name=log_name)
         self.__logger = self.logger
         self.__out_path = os.path.join(self.out_path, 'rfc')
+        check_del_path(self.__out_path)
         check_fix_path(self.__out_path)
         self.__temp = os.path.join(self.data_path, 'temp')
         check_fix_path(self.__temp)
@@ -100,13 +102,14 @@ class IPv62VecClassifier(Classifier):
         super().__init__(data_path, seeds_path, tool_path, log_name=log_name)
         self.__logger = self.logger
         self.__out_path = os.path.join(self.out_path, 'ipv62vec')
+        check_del_path(self.__out_path)
         check_fix_path(self.__out_path)
         self.__temp = os.path.join(self.data_path, 'temp')
         check_fix_path(self.__temp)
         self.__ipv6_vec_profile = os.path.join(self.__temp, 'ipv62vec_profile.txt')
 
     def classify(self):
-        cluter = IPv62VecCluster(self.seeds_path, self.__ipv6_vec_profile, self.out_path)
+        cluter = IPv62VecCluster(self.seeds_path, self.__ipv6_vec_profile, self.__out_path)
         cluter.create_category()
         return self.__out_path
 
@@ -141,6 +144,20 @@ class DataProcessor:
             # 转为ipv6地址完全形式
             os.system(f'cat "{self.__seeds_path}" | "{self.__tool_path}/addr6" -i -f > "{self.__fixed_seeds_path}"')
 
+    def sample_source(self, sample_n=50000):
+        sample_path = os.path.join(self.__data_path, f'seeds_sample_{sample_n}.txt')
+        if os.path.exists(sample_path):
+            self.__logger.info(f'Sample_{sample_n}  already exists')
+        else:
+            self.__logger.info(f'Sampling {sample_n} seeds...')
+            with open(self.__fixed_seeds_path, 'r') as f:
+                seeds = f.readlines()
+                seeds = random.sample(seeds, sample_n)
+                with open(sample_path, 'w') as f:
+                    f.writelines(seeds)
+        self.__fixed_seeds_path = sample_path
+        self.__logger.info(f'Sampling {sample_n} seeds: success')
+
     def __classifier(self, c_type: ClassifierType):
         if c_type == ClassifierType.rfc:
             self.__logger.info('Classifying seeds with rfc...')
@@ -151,8 +168,9 @@ class DataProcessor:
         elif c_type == ClassifierType.rand:
             self.__logger.info('Classifying seeds with random sample...')
             n_sample = 10000
-            rand = RandomizedSampleClassifier(self.__data_path, self.__fixed_seeds_path, self.__tool_path,n_sample=n_sample)
-            r_seed_path= rand.classify()
+            rand = RandomizedSampleClassifier(self.__data_path, self.__fixed_seeds_path, self.__tool_path,
+                                              n_sample=n_sample)
+            r_seed_path = rand.classify()
             self.__logger.info(f'Classifying seeds with random sample {n_sample}: success')
             return r_seed_path
         elif c_type == ClassifierType.vec:
@@ -170,46 +188,82 @@ class DataProcessor:
     def __addr62list(addr6: str) -> list:
         return [int(char, 16) * 17 for char in addr6.replace(':', '')]
 
-    def convert2img(self, c_type: ClassifierType):
-        """
-        Convert data to images
-        :param c_type: classifier type
-        :return: None
-        """
-        self.__logger.info('Convert seeds to images')
-        c_seeds_path = self.__classifier(c_type)
-        self.__logger.info('Converting classified seeds to images...')
-        for _t in os.listdir(c_seeds_path):
-            if _t.endswith('.txt'):
-                save_path = os.path.join(self.__img_path, c_type.value, _t[:-4], 'src')
-                check_del_path(save_path)
-                check_fix_path(save_path)
-                with open(os.path.join(c_seeds_path, _t), 'r') as f:
-                    img_list = []
-                    for index, line in enumerate(f):
-                        img_list += self.__addr62list(line.strip())
-                        if (index + 1) % 32 == 0:
-                            img_n = (index // 32)
-                            img = Image.new('L', (32, 32))
-                            for i in range(32):
-                                for j in range(32):
-                                    p = i * 32 + j
-                                    img.putpixel((j, i), img_list[p])
-                            img_list = []
-                            img.save(os.path.join(save_path, f'{img_n:0>10}.png'))
-                            self.__logger.info(
-                                f'type {c_type.value} | No.{img_n} img of {_t[:-4]} converted and saved at {save_path}')
-                        # 舍弃最后数量不足32的地址
-        self.__logger.info('Converting classified seeds to images: success')
+    @staticmethod
+    def __addr62bitmap(addr6: str) -> list:
+        img = []
+        addr_list = [int(char, 16) for char in addr6.replace(':', '')]
+        for ny in addr_list:
+            bitmap = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            bitmap[ny * 2] = 255
+            bitmap[ny * 2 + 1] = 255
+            img.append(bitmap)
+        return img
 
-    def new_convert2img(self, c_type: ClassifierType):
+    def __image_gen_1(self, c_type: ClassifierType, seeds, save_path, _t):
+        # 32个地址合成一张图
+        img_list = []
+        for index, line in enumerate(seeds):
+            img_list += self.__addr62list(line.strip())
+            if (index + 1) % 32 == 0:
+                img_n = (index // 32)
+                img = Image.new('L', (32, 32))
+                for i in range(32):
+                    for j in range(32):
+                        p = i * 32 + j
+                        img.putpixel((j, i), img_list[p])
+                img_list = []
+                img.save(os.path.join(save_path, f'{img_n:0>10}.png'))
+                self.__logger.info(
+                    f'type {c_type.value} | No.{img_n} img of {_t[:-4]} converted and saved at {save_path}')
+
+    def __image_gen_2(self, c_type: ClassifierType, seeds, save_path, _t):
+        # 一个地址合成一张图，简单重复32次
+        for index, line in enumerate(seeds):
+            img_list = []
+            img_line = self.__addr62list(line.strip())
+            for i in range(32):
+                img_list.append(img_line)
+            img = Image.fromarray(np.array(img_list, dtype=np.uint8), mode='L')
+            img.save(os.path.join(save_path, f'{index:0>10}.png'))
+            self.__logger.info(
+                f'type {c_type.value} | No.{index} img of {_t[:-4]} converted and saved at {save_path}')
+
+    def __image_gen_3(self, c_type: ClassifierType, seeds, save_path, _t):
+        # 一个地址合成一张图，每一行都反转
+        for index, line in enumerate(seeds):
+            img_list = []
+            img_line = self.__addr62list(line.strip())
+            reverse = img_line[::-1]
+            for i in range(32):
+                if i % 2:
+                    img_list.append(reverse)
+                else:
+                    img_list.append(img_line)
+            img = Image.fromarray(np.array(img_list, dtype=np.uint8).T, mode='L')
+            img.save(os.path.join(save_path, f'{index:0>10}.png'))
+            self.__logger.info(
+                f'type {c_type.value} | No.{index} img of {_t[:-4]} converted and saved at {save_path}')
+
+    def __image_gen_4(self, c_type: ClassifierType, seeds, save_path, _t):
+        # 一个地址合成一张图,每一列标识一个nyyble，标识办法是 每两行作为一个标记位，01行标记nyyble=0，12行标记nybble=1...
+        for index, line in enumerate(seeds):
+            img = self.__addr62bitmap(line.strip())
+            img = Image.fromarray(np.array(img, dtype=np.uint8).T, mode='L')
+            img.save(os.path.join(save_path, f'{index:0>10}.png'))
+            self.__logger.info(
+                f'type {c_type.value} | No.{index} img of {_t[:-4]} converted and saved at {save_path}')
+
+    def convert2img(self, c_type: ClassifierType, gen_type=2, sample_n=10000):
         """
         Convert data to images
         :param c_type: classifier type
+        :param gen_type: 图生成方法选择
+        :param sample_n: 采样数，也即数量上限
         :return: None
         """
         self.__logger.info('Convert seeds to images')
-        c_seeds_path = self.__classifier(c_type)
+        # c_seeds_path = self.__classifier(c_type)
+        c_seeds_path = './resources/data/classify_data/rfc'
         self.__logger.info('Converting classified seeds to images...')
         for _t in os.listdir(c_seeds_path):
             if _t.endswith('.txt'):
@@ -217,19 +271,25 @@ class DataProcessor:
                 check_del_path(save_path)
                 check_fix_path(save_path)
                 with open(os.path.join(c_seeds_path, _t), 'r') as f:
-                    lines_sample = random.sample(f.readlines(), 10000)
-                    for index, line in enumerate(lines_sample):
-                        img_list = []
-                        img_line = self.__addr62list(line.strip())
-                        for i in range(32):
-                            img_list.append(img_line)
-                        img = Image.fromarray(np.array(img_list, dtype=np.uint8), mode='L')
-                        img.save(os.path.join(save_path, f'{index:0>10}.png'))
-                        self.__logger.info(
-                            f'type {c_type.value} | No.{index} img of {_t[:-4]} converted and saved at {save_path}')
+                    seeds = f.readlines()
+                    if len(seeds) > sample_n:
+                        self.__logger.debug(f'{_t[:-4]} seeds size of {len(seeds)}, sampling {sample_n} seeds')
+                        seeds = random.sample(seeds, sample_n)
+                        self.__logger.debug('sample DONE!')
+                    if gen_type == 1:
+                        self.__image_gen_1(c_type, seeds, save_path, _t)
+                    elif gen_type == 2:
+                        self.__image_gen_2(c_type, seeds, save_path, _t)
+                    elif gen_type == 3:
+                        self.__image_gen_3(c_type, seeds, save_path, _t)
+                    elif gen_type == 4:
+                        self.__image_gen_4(c_type, seeds, save_path, _t)
+                    else:
+                        raise ValueError('gen_type not found')
         self.__logger.info('Converting classified seeds to images: success')
 
 
 if __name__ == '__main__':
     dp = DataProcessor()
-    dp.new_convert2img(ClassifierType.vec)
+    # dp.sample_source(sample_n=100000)
+    dp.convert2img(ClassifierType.rfc, gen_type=4)

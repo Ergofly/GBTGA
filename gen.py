@@ -104,16 +104,33 @@ class IPv6Generator(object):
         for img in generated_imgs:
             # 对每张图片的每一行进行处理
             img = img.squeeze(0)
-            row = torch.round(img.mean(dim=0) / 17).to(torch.int).tolist()
+            img = img.tolist()
+
+            # row = torch.round(img.mean(dim=0) / 17).to(torch.int).tolist()
+
+            # for i in range(1, 32, 2):
+            #     img[i] = torch.flip(img[i], dims=[0])
+            # row = torch.round(img.mean(dim=0) / 17).to(torch.int).tolist()
+
             hex_list = []
-            for x in row:
-                if x < 0:
-                    hex_list.append('0')
-                elif x > 15:
-                    hex_list.append('f')
-                else:
-                    hex_list.append(f'{x:x}')
-                # 将每四个元素分为一组
+            for col in range(32):
+                col_r = []
+                for i in range(0, 32, 2):
+                    if i + 1 < 32:
+                        sum = img[i][col] + img[i + 1][col]
+                        col_r.append(sum)
+
+                hex_list.append(f'{np.argmax(np.array(col_r)):x}')
+
+
+            # for x in row:
+            #     if x < 0:
+            #         hex_list.append('0')
+            #     elif x > 15:
+            #         hex_list.append('f')
+            #     else:
+            #         hex_list.append(f'{x:x}')
+            # 将每四个元素分为一组
             grouped_hex = [''.join(hex_list[i:i + 4]) for i in range(0, len(hex_list), 4)]
             # 将所有组用冒号连接成最终字符串
             address = ':'.join(grouped_hex)
@@ -126,7 +143,7 @@ class IPv6Generator(object):
 
     def gen(self, c_type: ClassifierType, model_type: str = 'final', *, num_gen=None):
         if num_gen is not None:
-            self.__n_image_gen = num_gen #// int(math.ceil(num_gen / 32))
+            self.__n_image_gen = num_gen  # // int(math.ceil(num_gen / 32))
         c_path = os.path.join(self.__load_path, c_type.value)
         for _t in os.listdir(c_path):
             m_name = None
@@ -143,4 +160,4 @@ class IPv6Generator(object):
 
 if __name__ == '__main__':
     gen = IPv6Generator()
-    gen.gen(ClassifierType.rfc,num_gen=10000) # ,'bestG')
+    gen.gen(ClassifierType.rfc, num_gen=10000)  # ,'bestG')

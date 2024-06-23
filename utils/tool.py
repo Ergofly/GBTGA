@@ -76,7 +76,6 @@ class IPv62VecCluster:
         if n_clusters_ > 10:
             raise ValueError(
                 'ClassNumError: generated class num %s > 10, please reset IPv62Vec parameters.' % n_clusters_)
-        print('cluster num', n_clusters_)
         return data
 
     def search_cluster(self, data, raw_data):
@@ -91,4 +90,3 @@ class IPv62VecCluster:
             for i in index:
                 f.write(raw_data[i])
             f.close()
-giy

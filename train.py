@@ -23,17 +23,17 @@ class Trainner:
         self.__logger = TgaLogger('trainer').get_logger()
         self.__model_params = {
             'nc': 1,  # Number of channels in the training images. For color images this is 3
-            'nz': 128,  # Size of z latent vector (i.e. size of generator input)
-            'ngf': 64,  # Size of feature maps in generator
-            'ndf': 64  # Size of feature maps in discriminator
+            'nz': 512,  # Size of z latent vector (i.e. size of generator input)
+            'ngf': 32, # 64 # Size of feature maps in generator
+            'ndf': 32  # 64 #   Size of feature maps in discriminator
         }
         self.__workers = 8  # Number of workers for dataloader
         self.__batch_size = 64  # Batch size during training
         self.__image_size = 32  # Spatial size of training images. Images will be resized to this using a transformer.
         # Number of training epochs
         self.__num_epochs = 20  # 20
-        self.__g_lr = 0.0002  # Learning rate for optimizers
-        self.__d_lr = 0.0002  # 0.00005
+        self.__g_lr = 0.0002 # Learning rate for optimizers
+        self.__d_lr = 0.00001  # 0.00005
         self.__beta1 = 0.5  # Beta1 hyperparameter for Adam optimizers
         self.__ngpu = 1  # Number of GPUs available. Use 0 for CPU mode.
         # Decide which device we want to run on
@@ -55,10 +55,13 @@ class Trainner:
         self.__real_label = 1.
         self.__fake_label = 0.
 
-        self.__num_epochs_pretrain_G = 1
-        self.__num_epochs_pretrain_D = 3
+        self.__num_epochs_pretrain_G = 20 # 2
+        self.__num_epochs_pretrain_D = 0 # 1
         self.__g_step = 1
         self.__d_step = 1
+
+        self.__g_threshold = 0 #0.7
+        self.__d_threshold = 0  #0.8
 
         self.__alpha = 1  # 判别器损失中真实样本的权重
         self.__beta = 1  # 判别器损失中假样本的权重
@@ -234,8 +237,14 @@ class Trainner:
         iters = 0
         last_loss_g = 100
         self.__logger.debug('Starting Training Loop ...')
+
+        # if dataset is small, train more epochs
+        total_epoch = self.__num_epochs
+        if len(self.__dataloader) < 100:
+            total_epoch = total_epoch * 2
+
         # For each epoch
-        for epoch in range(self.__num_epochs):
+        for epoch in range(total_epoch):
             # For each batch in the dataloader
             for i, data in enumerate(self.__dataloader, 0):
                 for _ in range(self.__d_step):
@@ -274,7 +283,7 @@ class Trainner:
                     # Compute error of D as sum over the fake and the real batches
                     errD = errD_real + errD_fake
                     # Update D
-                    if errD < 2.5:
+                    if errD > self.__d_threshold:
                         self.__optimizerD.step()
 
                 for _ in range(self.__g_step):
@@ -292,12 +301,13 @@ class Trainner:
                     errG.backward()
                     D_G_z2 = output.mean().item()
                     # Update G
-                    self.__optimizerG.step()
+                    if errG > self.__g_threshold:
+                        self.__optimizerG.step()
 
                 # Output training stats
                 if i % 50 == 0:
                     self.__logger.info('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                                       % (epoch + 1, self.__num_epochs, i, len(self.__dataloader),
+                                       % (epoch + 1, total_epoch, i, len(self.__dataloader),
                                           errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
 
                 # save best model
@@ -323,14 +333,16 @@ class Trainner:
                     self.__img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
                 iters += 1
+            # if epoch%2:
+            #     self.__show_result()
         self.__logger.info('Training DONE!')
 
     def train(self, classify_type: ClassifierType):
         self.__data_path = os.path.join(self.__data_path, classify_type.value)
         for _t in os.listdir(self.__data_path):
-            if len(os.listdir(os.path.join(self.__data_path, _t, 'src'))) < 1000:
-                self.__logger.warning(f'Too few data: {os.path.join(self.__data_path, _t)}')
-                continue
+            # if len(os.listdir(os.path.join(self.__data_path, _t, 'src'))) < 1000:
+            #     self.__logger.warning(f'Too few data: {os.path.join(self.__data_path, _t)}')
+            #     continue
             self.__img_list = []
             self.__G_losses = []
             self.__D_losses = []
