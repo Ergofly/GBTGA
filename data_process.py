@@ -114,6 +114,79 @@ class IPv62VecClassifier(Classifier):
         return self.__out_path
 
 
+class EntropyIPClassifier(Classifier):
+    def __init__(self, data_path, seeds_path, tool_path, *, log_name='entropy_ip_classifier'):
+        super().__init__(data_path, seeds_path, tool_path, log_name=log_name)
+        self.__logger = self.logger
+        self.__out_path = os.path.join(self.out_path, 'entropy-ip')
+        check_del_path(self.__out_path)
+        check_fix_path(self.__out_path)
+        self.__temp = os.path.join(self.data_path, 'temp')
+        check_fix_path(self.__temp)
+        self.__formated_seed = os.path.join(self.__temp, 'formated_seeds.txt')
+        self.__eip_profile = os.path.join(self.__temp, 'entropy-ip_profile.txt')
+        self.__eip_cluster = os.path.join(self.__temp, 'ec_cluster.txt')
+        self.__k = 4
+        self.__profile_cmd = f'cat {self.__formated_seed} | ' + \
+                             f'{self.tool_path}/entropy-clustering/profiles > {self.__eip_profile}'
+        self.__cluster_cmd = f'cat {self.__eip_profile} | ' + \
+                             f'{self.tool_path}/entropy-clustering/clusters -kmeans -k ' \
+                             + str(self.__k) + f' > {self.__eip_cluster}'
+
+
+    def classify(self):
+        lines = []
+        with open(self.seeds_path, 'r') as s:
+            for line in s:
+                line = line.strip()
+                if line == '':
+                    continue
+                line = line.replace(':', '')
+                lines.append(line + '\n')
+        with open(self.__formated_seed, 'w') as f:
+            f.writelines(lines)
+        self.__logger.info('running cmd ...')
+        classify_dict = {}
+        classify_prefix_dict = {}
+        os.system(self.__profile_cmd)
+        os.system(self.__cluster_cmd)
+        self.__logger.info('running cmd: success')
+        for i in range(self.__k):
+            classify_dict[str(i)] = []
+            classify_prefix_dict[str(i)] = []
+        type_pointer = 0
+        class_prefix = []
+        f = open(self.__eip_cluster, 'r')
+        for line in f:
+            if line[0] == '=':
+                class_prefix = []
+            elif line[0] == '\n':
+                classify_prefix_dict[str(type_pointer)].extend(class_prefix)
+                type_pointer += 1
+            elif line[:7] == 'SUMMARY':
+                break
+            else:
+                class_prefix.append(line[:8])
+        f.close()
+
+        for type in classify_prefix_dict.keys():
+            for prefix in classify_prefix_dict[type]:
+                f = open(self.seeds_path, 'r')
+                for line in f:
+                    if prefix == line.replace(':','')[:8]:
+                        classify_dict[type].append(line)
+                f.close()
+
+        self.__logger.info('writing files ...')
+        for type in classify_dict.keys():
+            f = open(os.path.join(self.__out_path, 'cluster_' + type + '.txt'), 'w')
+            f.writelines(classify_dict[type])
+            f.close()
+        self.__logger.info('writing files D0NE!')
+
+        return self.__out_path
+
+
 class DataProcessor:
     """
     DataProcessor is a class that is used to process the data
@@ -179,8 +252,12 @@ class DataProcessor:
             v_seed_path = ipv62vec.classify()
             self.__logger.info('Classifying seeds with ipv62vec: success')
             return v_seed_path
-        elif c_type == 'other':
-            pass
+        elif c_type == ClassifierType.eip:
+            self.__logger.info('Classifying seeds with entropy-ip...')
+            eip = EntropyIPClassifier(self.__data_path, self.__fixed_seeds_path, self.__tool_path)
+            eip_seed_path = eip.classify()
+            self.__logger.info('Classifying seeds with entropy-ip: success')
+            return eip_seed_path
         else:
             pass
 
@@ -239,7 +316,7 @@ class DataProcessor:
                     img_list.append(reverse)
                 else:
                     img_list.append(img_line)
-            img = Image.fromarray(np.array(img_list, dtype=np.uint8).T, mode='L')
+            img = Image.fromarray(np.array(img_list, dtype=np.uint8), mode='L')
             img.save(os.path.join(save_path, f'{index:0>10}.png'))
             self.__logger.info(
                 f'type {c_type.value} | No.{index} img of {_t[:-4]} converted and saved at {save_path}')
@@ -262,8 +339,8 @@ class DataProcessor:
         :return: None
         """
         self.__logger.info('Convert seeds to images')
-        # c_seeds_path = self.__classifier(c_type)
-        c_seeds_path = './resources/data/classify_data/rfc'
+        c_seeds_path = self.__classifier(c_type)
+        #c_seeds_path = './resources/data/classify_data/rfc'
         self.__logger.info('Converting classified seeds to images...')
         for _t in os.listdir(c_seeds_path):
             if _t.endswith('.txt'):
@@ -291,5 +368,5 @@ class DataProcessor:
 
 if __name__ == '__main__':
     dp = DataProcessor()
-    # dp.sample_source(sample_n=100000)
-    dp.convert2img(ClassifierType.rfc, gen_type=4)
+    dp.sample_source(sample_n=300000)
+    dp.convert2img(ClassifierType.eip, gen_type=4,sample_n=10000)
